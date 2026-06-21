@@ -17,7 +17,7 @@ class SalesIntelligence:
         Warm introduction like experienced sales person
         """
         return (
-            "హలో బ్రో! నేను అజయ్. Ten Thousand Coders నుండి calling. "
+            "హలో బ్రో! నేను AI Sales Assistant ని. Software training programs గురించి మాట్లాడటానికి call చేస్తున్నాను..."
             "నాకు soft skills and technical training లో 10 years experience ఉంది బ్రో. "
             "ఇక్కడ మేము engineering students ని software engineers గా మార్చేస్తాము. "
             "ఇంటర్ నుండి ఉద్యోగం వరకు - మేము ఉన్నాము బ్రో. "
