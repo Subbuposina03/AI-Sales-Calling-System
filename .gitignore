@@ -1,6 +1,26 @@
+# Sensitive environment variables
 .env
+.env.local
+.env.*.local
+
+# Twilio and booking data
+student_bookings.json
+
+# Local binaries and virtual environments
 ngrok.exe
-__pycache__/
-*.pyc
+ngrok
 venv/
 .venv/
+env/
+ENV/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Operating system artifacts
+.DS_Store
+Thumbs.db

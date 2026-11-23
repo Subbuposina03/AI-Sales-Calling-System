@@ -1,6 +1,78 @@
-# Question Detection and Answer Generation System
-
+# Question Detection and Answer Generation System with Gemini AI Integration
+import os
+import json
+from dotenv import load_dotenv
 from knowledge_base import COURSE_INFO, FAQS
+
+load_dotenv()
+
+
+def query_gemini_ai(user_text: str, context: str = "") -> str:
+    """
+    Call Google Gemini AI to generate a natural, conversational response
+    as an experienced institute sales counselor for Ten Thousand Coders.
+    Falls back gracefully if offline, API key missing, or call fails.
+    """
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return ""
+
+    model_name = os.getenv("GENIE_MODEL_NAME", "gemini-1.5-flash").strip() or "gemini-1.5-flash"
+
+    system_instruction = (
+        "You are Ajay, a friendly senior sales counselor with 10+ years experience at Ten Thousand Coders. "
+        "You are speaking to an engineering/degree student over a phone call in natural conversational Telugu slang "
+        "mixed with English (addressing the student warmly as 'బ్రో' / 'bro').\n"
+        "Here are the authentic institute facts you must strictly follow:\n"
+        "- Courses: Python Full Stack (8 weeks, 12,000 INR after 20% discount) and Java Full Stack (10 weeks, 14,000 INR after 20% discount).\n"
+        "- Placements: 85% placement rate, 3.5 to 5.5 LPA average package (range 3-8 LPA). Recruiters: TCS, Infosys, Accenture, Wipro, Amazon, startups.\n"
+        "- Batches: Max 15 students per batch for personalized attention. Evening batches (6-8 PM) and weekend batches (10 AM-1 PM).\n"
+        "- Mentors: 5-10+ years industry experience, 1-on-1 code reviews and lifetime doubt solving.\n"
+        "- Projects: 100% real portfolio projects (E-commerce, social media app, chat application).\n"
+        "- Free Demo: 1-hour hands-on live coding demo class available Monday to Friday (10 AM, 2 PM, 4 PM) with zero commitment.\n"
+        "- CRITICAL CONSTRAINT FOR VOICE AUDIO: Keep your answer short and concise (1 to 3 short sentences maximum), "
+        "because this is spoken aloud over Twilio telephone text-to-speech. Never use markdown, bullet points, asterisks, or lists."
+    )
+
+    prompt_content = f"{system_instruction}\n\nStudent question: {user_text}\nCounselor short spoken response:"
+
+    # Attempt 1: Using google.generativeai SDK if installed
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(prompt_content)
+        if response and response.text:
+            cleaned = response.text.replace("*", "").replace("#", "").strip()
+            return cleaned
+    except Exception:
+        pass
+
+    # Attempt 2: Direct REST call via requests / urllib (always works when network is available)
+    try:
+        import requests
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt_content}]}],
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 120
+            }
+        }
+        res = requests.post(url, json=payload, timeout=4)
+        if res.status_code == 200:
+            data = res.json()
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts and "text" in parts[0]:
+                    cleaned = parts[0]["text"].replace("*", "").replace("#", "").strip()
+                    return cleaned
+    except Exception:
+        pass
+
+    return ""
+
 
 def detect_question_type(user_text):
     """
@@ -105,13 +177,20 @@ def detect_question_type(user_text):
     if any(word in text_lower for word in ["mentor", "teacher", "instructor", "support", "help"]):
         return "mentor_support", "Our mentors have 5-10 years industry experience! They provide: 1-on-1 doubt solving, Code review, Career guidance, Interview preparation, Lifetime support even after course completion."
     
-    # If no specific question detected, ask for clarification
+    # If no specific question detected, mark as unclear
     return "unclear", None
 
 def generate_answer(question_type, user_text):
     """
-    Generate a salesperson-like response
+    Generate a salesperson-like response.
+    If the question is unclear or general doubt, queries Gemini AI first.
     """
+    # If question is unclear or general doubt, try Gemini AI first
+    if question_type in ["unclear", "general_doubt"]:
+        gemini_response = query_gemini_ai(user_text)
+        if gemini_response:
+            return gemini_response
+
     responses = {
         "what_is_full_stack": f"నీ question బాగుందా బ్రో! {FAQS['what_is_full_stack']['answer']}",
         
@@ -202,7 +281,7 @@ def get_demo_booking_response():
         "నీ doubt clear చేయడానికి free demo best! Actual mentors తో code చేస్తాం. నీ time ఎంటా?",
         "అన్నీ clear అయ్యే పటికి demo attend చేయనా? 0 investment, 100% practical learning!"
     ]
-    return responses[0]  # Can rotate these for variety
+    return responses[0]
 
 def get_sales_pitch_response(turn_number):
     """
@@ -222,4 +301,3 @@ def get_sales_pitch_response(turn_number):
 """
     else:
         return "ఇక్కడ చెప్పిన విషయాల గురించి మీకు ఏమైనా specific question ఉందా?"
-

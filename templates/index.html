@@ -2,33 +2,235 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>AI Call Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Sales Calling Agent | Ten Thousand Coders</title>
+    <meta name="description" content="AI Sales Calling Agent powered by Gemini AI and Twilio Voice. Automated course enquiry and instant demo slot booking." />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
-    <main class="card">
-      <h1>AI Sales Call</h1>
+    <!-- BACKGROUND GLOWS -->
+    <div class="glow-bg glow-top"></div>
+    <div class="glow-bg glow-bottom"></div>
 
-      <div class="field">
-        <label for="phone">Phone number</label>
-        <input id="phone" placeholder="+1234567890" />
+    <!-- HEADER / NAVIGATION -->
+    <header class="navbar">
+      <div class="nav-container">
+        <div class="brand">
+          <div class="brand-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+              <path d="M14.05 2a9 9 0 0 1 8 7.94"></path>
+              <path d="M14.05 6A5 5 0 0 1 18 10"></path>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-title">AI Sales Calling Agent</span>
+            <span class="brand-subtitle">Ten Thousand Coders</span>
+          </div>
+        </div>
+        <div class="system-status">
+          <span class="pulse-dot"></span>
+          <span class="status-label">Voice Agent Online</span>
+        </div>
       </div>
+    </header>
 
-      <div class="actions">
-        <button id="callBtn" class="primary">Call</button>
-        <div id="status" class="status">Idle</div>
-      </div>
+    <!-- MAIN HERO & CALL ACTION -->
+    <main class="main-container">
+      <section class="hero-section">
+        <div class="badge-pill">
+          <span class="badge-star">✦</span>
+          <span>Google Gemini AI &amp; Twilio Voice Integration</span>
+        </div>
+        <h1 class="hero-title">Experience Real-Time <br><span class="gradient-text">AI Sales Calling</span></h1>
+        <p class="hero-desc">
+          Enter your phone number below to receive an automated voice call from our AI sales counselor. 
+          Talk naturally in Telugu or English, explore Python &amp; Java Full Stack bootcamps, get fee discounts, 
+          and book your free 1-hour live coding demo class instantly.
+        </p>
 
-      <div class="connecting" id="connecting" aria-hidden="true">
-        <div class="dot"></div>
-        <div class="dot"></div>
-        <div class="dot"></div>
-        <div class="label">Connecting…</div>
-      </div>
+        <!-- CALL CARD -->
+        <div class="card call-card">
+          <div class="card-header">
+            <div class="card-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+              </svg>
+            </div>
+            <div>
+              <h2>Request an Instant Call</h2>
+              <p class="card-subtitle">Our AI agent will dial your phone immediately</p>
+            </div>
+          </div>
 
-      <p class="hint">Make sure your `.env` has Twilio keys and `VOICE_WEBHOOK_URL` set.</p>
+          <form id="callForm" class="call-form" onsubmit="return false;">
+            <!-- PHONE INPUT GROUP -->
+            <div class="form-group">
+              <label for="phoneNumber">Mobile Number</label>
+              <div class="phone-input-wrapper">
+                <select id="countryCode" class="country-select" aria-label="Country Code">
+                  <option value="+91" selected>🇮🇳 +91 (India)</option>
+                  <option value="+1">🇺🇸 +1 (USA/Canada)</option>
+                  <option value="+44">🇬🇧 +44 (UK)</option>
+                  <option value="+971">🇦🇪 +971 (UAE)</option>
+                  <option value="+61">🇦🇺 +61 (Australia)</option>
+                  <option value="+65">🇸🇬 +65 (Singapore)</option>
+                  <option value="+49">🇩🇪 +49 (Germany)</option>
+                  <option value="+966">🇸🇦 +966 (Saudi Arabia)</option>
+                </select>
+                <input 
+                  type="tel" 
+                  id="phoneNumber" 
+                  class="phone-input" 
+                  placeholder="98765 43210" 
+                  value="{{ default_phone or '' }}"
+                  autocomplete="tel" 
+                  required
+                />
+              </div>
+              <div class="field-hint">
+                Formatted destination: <span id="fullNumberPreview" class="preview-text">+91</span>
+              </div>
+            </div>
+
+            <!-- CONSENT CHECKBOX -->
+            <div class="form-consent">
+              <label class="checkbox-container">
+                <input type="checkbox" id="consentCheckbox" required checked />
+                <span class="checkmark"></span>
+                <span class="consent-text">
+                  I agree to receive an automated AI demonstration phone call on this mobile number.
+                </span>
+              </label>
+            </div>
+
+            <!-- CALL BUTTON -->
+            <button type="submit" id="callBtn" class="btn-primary">
+              <span class="btn-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+                </svg>
+              </span>
+              <span class="btn-text">Call Me Now</span>
+              <span class="btn-spinner" aria-hidden="true"></span>
+            </button>
+          </form>
+
+          <!-- STATUS & PROGRESS PANEL -->
+          <div id="statusPanel" class="status-panel" style="display: none;">
+            <div class="status-header">
+              <span class="status-label-heading">Call Status:</span>
+              <span id="callStatusBadge" class="status-badge badge-idle">Idle</span>
+            </div>
+
+            <!-- STEP TRACKER -->
+            <div class="call-steps">
+              <div class="step-item" id="step1">
+                <div class="step-circle">1</div>
+                <div class="step-label">Validating</div>
+              </div>
+              <div class="step-line" id="line1"></div>
+              <div class="step-item" id="step2">
+                <div class="step-circle">2</div>
+                <div class="step-label">Twilio Dispatch</div>
+              </div>
+              <div class="step-line" id="line2"></div>
+              <div class="step-item" id="step3">
+                <div class="step-circle">3</div>
+                <div class="step-label">Phone Ringing</div>
+              </div>
+              <div class="step-line" id="line3"></div>
+              <div class="step-item" id="step4">
+                <div class="step-circle">4</div>
+                <div class="step-label">AI Conversation</div>
+              </div>
+            </div>
+
+            <!-- LIVE MESSAGE BOX -->
+            <div id="alertBox" class="alert-box" style="display: none;">
+              <div class="alert-icon" id="alertIcon"></div>
+              <div class="alert-content">
+                <h4 id="alertTitle">Notice</h4>
+                <p id="alertMessage"></p>
+                <div id="alertCallSid" class="call-sid-tag" style="display: none;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card-footer">
+            <span class="lock-icon">🔒</span>
+            <span>Your number is kept strictly private and used solely for this AI demonstration.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- FEATURE HIGHLIGHTS -->
+      <section class="features-section">
+        <h3 class="section-title">What Happens on the Call?</h3>
+        <div class="features-grid">
+          <div class="feature-card">
+            <div class="feat-icon feat-blue">🗣️</div>
+            <h4>Experienced Sales Persona</h4>
+            <p>Speaks naturally like a 10+ year veteran counselor in Telugu-English mix, establishing rapport and understanding student background.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feat-icon feat-purple">🧠</div>
+            <h4>Gemini AI Powered</h4>
+            <p>Understands speech intent, answers technical doubts about AI, Web Development, and syllabus dynamically with high accuracy.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feat-icon feat-emerald">💼</div>
+            <h4>Transparent Placements</h4>
+            <p>Provides honest statistics: 85% placement rate, 3.5 - 5.5 LPA avg salary, top recruiters like TCS, Infosys, Amazon, and startups.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feat-icon feat-amber">📅</div>
+            <h4>Automated Demo Booking</h4>
+            <p>Guides students to select their course, pick Monday-Friday slots, confirms their details, and saves verified bookings automatically.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- COURSE COMPARISON -->
+      <section class="courses-section">
+        <h3 class="section-title">Programs Offered</h3>
+        <div class="courses-grid">
+          <div class="course-card">
+            <div class="course-tag">Most Popular</div>
+            <h4>Python Full Stack Bootcamp</h4>
+            <div class="course-fee">₹12,000 <span class="original-fee">₹15,000</span> <span class="discount-pill">20% OFF</span></div>
+            <ul class="course-list">
+              <li>⏱️ <strong>Duration:</strong> 8 Weeks Intensive</li>
+              <li>💻 <strong>Technologies:</strong> Python, Django, Flask, React, SQL, REST APIs</li>
+              <li>🚀 <strong>Projects:</strong> E-commerce Store, Social App, Chat App</li>
+              <li>🎯 <strong>Demo:</strong> 1-Hour Free Hands-on Live Coding Class</li>
+            </ul>
+          </div>
+          <div class="course-card">
+            <div class="course-tag tag-blue">Enterprise Track</div>
+            <h4>Java Full Stack Bootcamp</h4>
+            <div class="course-fee">₹14,000 <span class="original-fee">₹17,500</span> <span class="discount-pill">20% OFF</span></div>
+            <ul class="course-list">
+              <li>⏱️ <strong>Duration:</strong> 10 Weeks Intensive</li>
+              <li>💻 <strong>Technologies:</strong> Core Java, Spring Boot, Microservices, React, SQL</li>
+              <li>🚀 <strong>Projects:</strong> Enterprise Banking &amp; Cloud Microservices</li>
+              <li>🎯 <strong>Demo:</strong> 1-Hour Free Hands-on Live Coding Class</li>
+            </ul>
+          </div>
+        </div>
+      </section>
     </main>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+      <div class="footer-container">
+        <p>© 2026 AI Sales Calling Agent · Ten Thousand Coders. All rights reserved.</p>
+        <p class="footer-sub">Single Public URL Deployment · Production Ready on Render</p>
+      </div>
+    </footer>
 
     <script src="/static/app.js"></script>
   </body>

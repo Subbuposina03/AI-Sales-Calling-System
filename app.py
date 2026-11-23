@@ -1,7 +1,9 @@
+import os
+import time
+from collections import defaultdict
 from flask import Flask, request, render_template, jsonify
 from twilio.twiml.voice_response import VoiceResponse, Gather
 from dotenv import load_dotenv
-import os
 
 # Import our custom systems
 from knowledge_base import COURSE_INFO, FAQS
@@ -16,15 +18,52 @@ from course_booking import (
     extract_course, extract_day, extract_time
 )
 from booking_system import create_booking
+from call import make_outbound_call, normalize_phone_number, validate_e164_phone
 
 app = Flask(__name__)
 load_dotenv()
 
 print("=" * 70)
-print("🔥 ADVANCED AI SALES AGENT WITH SMART BOOKING SYSTEM")
-print("✅ Talks like experienced sales counselor")
-print("✅ Course selection & slot booking automation")
+print("🔥 ADVANCED AI SALES CALLING AGENT - PRODUCTION READY")
+print("✅ Automated Outbound Calling via Twilio REST API")
+print("✅ Gemini AI + Knowledge Base Sales Counseling")
+print("✅ Course Selection & Demo Slot Booking Automation")
 print("=" * 70)
+
+# =============================
+# IN-MEMORY RATE LIMITING & SECURITY
+# =============================
+ip_request_timestamps = defaultdict(list)
+phone_call_timestamps = {}
+active_call_sids = {}
+
+def get_client_ip():
+    """Retrieve client IP address accounting for reverse proxies (Render, Cloudflare, etc.)."""
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.remote_addr or "127.0.0.1"
+
+def is_ip_rate_limited(ip: str, max_requests: int = 6, window_seconds: int = 600) -> bool:
+    """Limit each IP to max_requests within window_seconds."""
+    now = time.time()
+    recent = [t for t in ip_request_timestamps[ip] if now - t < window_seconds]
+    ip_request_timestamps[ip] = recent
+    if len(recent) >= max_requests:
+        return True
+    ip_request_timestamps[ip].append(now)
+    return False
+
+def check_phone_cooldown(phone: str, cooldown_seconds: int = 120):
+    """Prevent spamming calls to the same phone number within cooldown period."""
+    now = time.time()
+    last_call = phone_call_timestamps.get(phone)
+    if last_call and (now - last_call < cooldown_seconds):
+        remaining = int(cooldown_seconds - (now - last_call))
+        return False, remaining
+    phone_call_timestamps[phone] = now
+    return True, 0
+
 
 # =============================
 # CALL STATE TRACKING
@@ -50,30 +89,24 @@ def get_state(call_id):
 def update_state(call_id, state):
     call_state[call_id] = state
 
-
 def is_affirmative(text):
     text_lower = text.lower()
-    return any(word in text_lower for word in ["yes", "ya", "yup", "sure", "okay", "of course", "absolutely", "want", "i do", "నేను", "అవును", "సరే"])
-
+    return any(word in text_lower for word in ["yes", "ya", "yup", "sure", "okay", "of course", "absolutely", "want", "i do", "నేను", "అవును", "సరే", "yes please"])
 
 def is_negative(text):
     text_lower = text.lower()
-    return any(word in text_lower for word in ["no", "don't", "dont", "nah", "not interested", "కాదు", "లేదు"])
-
+    return any(word in text_lower for word in ["no", "don't", "dont", "nah", "not interested", "కాదు", "లేదు", "no thanks"])
 
 def add_to_history(call_id, role, text):
     if call_id not in conversation_history:
         conversation_history[call_id] = []
     conversation_history[call_id].append({"role": role, "text": text})
 
-
 def get_turn(call_id):
     return turn_count.get(call_id, 0)
 
-
 def increment_turn(call_id):
     turn_count[call_id] = get_turn(call_id) + 1
-
 
 def get_stage_followup_prompt(state):
     stage = state.get("stage", "intro")
@@ -95,7 +128,6 @@ def get_stage_followup_prompt(state):
         else:
             return "ఇది correct కాదా బ్రో? yes or no చెప్పు బ్రో."
     return get_after_answer()
-
 
 def try_general_question_response(response, call_id, user_input, state):
     question_type, direct_answer = detect_question_type(user_input)
@@ -126,65 +158,161 @@ def try_general_question_response(response, call_id, user_input, state):
     response.append(gather)
     return True
 
+
 # =============================
-# HEALTH CHECK
+# PUBLIC WEB ROUTES
 # =============================
 @app.route("/", methods=["GET"])
-def health():
-    return "✅ Real AI Sales Agent is running with ACTUAL course knowledge!"
+def home():
+    """Main responsive landing page for the AI Sales Calling Agent."""
+    default_phone = os.getenv("STUDENT_PHONE_NUMBER", "").strip()
+    return render_template("index.html", default_phone=default_phone)
 
-
-# =============================
-# SIMPLE WEB DASHBOARD
-# =============================
 @app.route("/dashboard", methods=["GET"])
 def dashboard():
+    """Backwards compatibility for /dashboard route."""
     return render_template("index.html")
 
+@app.route("/health", methods=["GET"])
+def health():
+    """Health check endpoint for deployment monitoring."""
+    public_url = os.getenv("PUBLIC_BASE_URL", "").strip() or request.host_url.rstrip("/")
+    return jsonify({
+        "status": "healthy",
+        "service": "AI Sales Calling Agent",
+        "public_base_url": public_url,
+        "configured_twilio": bool(os.getenv("TWILIO_ACCOUNT_SID")),
+        "configured_gemini": bool(os.getenv("GEMINI_API_KEY"))
+    }), 200
 
+
+# =============================
+# TRIGGER CALL ENDPOINT
+# =============================
 @app.route("/trigger_call", methods=["POST"])
 def trigger_call():
-    """Trigger an outbound call via Twilio (uses same env vars as call.py).
-    Expects JSON: { "phone": "+123..." }
     """
-    from twilio.rest import Client
-    phone = request.json.get("phone") if request.is_json else request.form.get("phone")
-    if not phone:
-        return jsonify({"error": "Phone number required"}), 400
+    Initiate an automated outbound AI sales call to the submitted phone number.
+    Expects JSON: { "phone": "+919876543210", "consent": true }
+    """
+    data = request.get_json(silent=True) or request.form.to_dict()
+    phone_input = data.get("phone", "").strip()
+    consent = data.get("consent")
 
-    TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
-    TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
-    TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "").strip()
-    VOICE_WEBHOOK_URL = os.getenv("VOICE_WEBHOOK_URL", "").strip()
-    SIMULATE_MODE = os.getenv("SIMULATE_MODE", "").strip().lower() in ("1", "true", "yes")
+    # 1. Validate Consent
+    if consent not in [True, "true", "1", 1, "on"]:
+        return jsonify({
+            "success": False,
+            "error": "Consent required: Please confirm you agree to receive an automated AI demonstration phone call."
+        }), 400
 
-    if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, VOICE_WEBHOOK_URL]):
-        return jsonify({"error": "Missing Twilio configuration in environment"}), 500
+    # 2. Validate Phone Input
+    if not phone_input:
+        return jsonify({
+            "success": False,
+            "error": "Phone number is required."
+        }), 400
 
-    if SIMULATE_MODE or os.getenv("SIMULATE_MODE", "").lower() in ("1", "true", "yes"):
-        # Simulate invocation of the webhook similar to call.py
-        import urllib.parse, urllib.request
-        form_data = urllib.parse.urlencode({
-            "CallSid": "SIMULATED_CALL_SID",
-            "From": phone,
-            "To": TWILIO_FROM_NUMBER,
-            "CallStatus": "in-progress",
-        }).encode("utf-8")
-        req = urllib.request.Request(VOICE_WEBHOOK_URL, data=form_data, headers={"Content-Type": "application/x-www-form-urlencoded"})
-        try:
-            with urllib.request.urlopen(req) as resp:
-                body = resp.read().decode("utf-8")
-            return jsonify({"status": "simulated", "webhook_response": body})
-        except Exception as exc:
-            return jsonify({"error": str(exc)}), 500
+    normalized_phone = normalize_phone_number(phone_input)
+    if not validate_e164_phone(normalized_phone):
+        return jsonify({
+            "success": False,
+            "error": f"Invalid phone number format: '{phone_input}'. Please enter a valid mobile number with country code, e.g. +91 9876543210."
+        }), 400
 
-    # Real call via Twilio
+    # 3. IP Rate Limiting
+    client_ip = get_client_ip()
+    if is_ip_rate_limited(client_ip):
+        return jsonify({
+            "success": False,
+            "error": "Too many call requests from your IP. Please wait 10 minutes before trying again."
+        }), 429
+
+    # 4. Duplicate / Cooldown Check for Phone Number
+    allowed, remaining = check_phone_cooldown(normalized_phone, cooldown_seconds=120)
+    if not allowed:
+        return jsonify({
+            "success": False,
+            "error": f"A call was recently initiated to {normalized_phone}. Please wait {remaining} seconds before requesting another call."
+        }), 429
+
+    # 5. Resolve Public Webhook URL
+    # Priority: PUBLIC_BASE_URL env -> VOICE_WEBHOOK_URL env -> Dynamic request host (with SSL check)
+    public_base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    webhook_url = None
+    if public_base_url:
+        webhook_url = f"{public_base_url}/voice"
+    elif os.getenv("VOICE_WEBHOOK_URL"):
+        webhook_url = os.getenv("VOICE_WEBHOOK_URL").strip()
+    else:
+        # Dynamically determine host URL (Render / reverse proxy support)
+        proto = request.headers.get("X-Forwarded-Proto", request.scheme)
+        host = request.headers.get("X-Forwarded-Host", request.host)
+        webhook_url = f"{proto}://{host}/voice"
+
+    print(f"\n[Trigger Call] Initiating call to {normalized_phone} using webhook: {webhook_url}")
+
+    # 6. Execute Outbound Call via refactored call module
+    result = make_outbound_call(
+        to_phone_number=normalized_phone,
+        webhook_url=webhook_url
+    )
+
+    if result["success"]:
+        call_sid = result.get("call_sid")
+        if call_sid:
+            active_call_sids[call_sid] = {
+                "phone": normalized_phone,
+                "timestamp": time.time(),
+                "status": result.get("status", "started")
+            }
+        return jsonify({
+            "success": True,
+            "status": result.get("status", "started"),
+            "call_sid": call_sid,
+            "phone": normalized_phone,
+            "message": result.get("message", "Call initiated successfully! Your phone will ring shortly.")
+        }), 200
+    else:
+        return jsonify({
+            "success": False,
+            "error": result.get("message", "Failed to initiate call. Check Twilio configuration."),
+            "error_code": result.get("error_code")
+        }), 400
+
+
+# =============================
+# CALL STATUS POLLING ENDPOINT
+# =============================
+@app.route("/call_status/<call_sid>", methods=["GET"])
+def get_call_status(call_sid):
+    """Check live status of a call via Twilio REST API for frontend feedback."""
+    if call_sid.startswith("SIMULATED"):
+        return jsonify({
+            "call_sid": call_sid,
+            "status": "completed",
+            "duration": "0",
+            "simulated": True
+        })
+
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+    if not account_sid or not auth_token:
+        return jsonify({"call_sid": call_sid, "status": "in-progress"}), 200
+
     try:
-        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        call = client.calls.create(to=phone, from_=TWILIO_FROM_NUMBER, url=VOICE_WEBHOOK_URL)
-        return jsonify({"status": "started", "call_sid": call.sid})
+        from twilio.rest import Client
+        client = Client(account_sid, auth_token)
+        call = client.calls(call_sid).fetch()
+        return jsonify({
+            "call_sid": call.sid,
+            "status": call.status,
+            "duration": call.duration,
+            "to": call.to
+        }), 200
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"call_sid": call_sid, "status": "unknown", "error": str(exc)}), 200
+
 
 # =============================
 # INITIAL VOICE CALL ENDPOINT
@@ -192,14 +320,15 @@ def trigger_call():
 @app.route("/voice", methods=["POST"])
 def voice():
     """
-    When student receives the call, this is what they hear first
+    When student receives and answers the call, this is what they hear first.
+    Twilio posts to this webhook upon call answer.
     """
     call_id = request.form.get("CallSid", "default")
-    phone = request.form.get("From", "unknown")
-    
+    phone = request.form.get("From", request.form.get("To", "unknown"))
+
     # Store student phone number for booking
     student_phone[call_id] = phone
-    
+
     call_state[call_id] = {
         "stage": "intro",
         "questions_asked": 0,
@@ -210,9 +339,9 @@ def voice():
         "student_name": None,
         "student_mobile": None
     }
-    
+
     response = VoiceResponse()
-    
+
     gather = Gather(
         input="speech",
         action="/process",
@@ -221,15 +350,16 @@ def voice():
         speechTimeout="auto",
         language="en-IN"
     )
-    
+
     opening = get_intro_message()
     interest_q = get_interest_check()
     full_message = opening + " " + interest_q
-    
+
     gather.say(full_message, voice="Polly.Aditi", language="en-IN")
     response.append(gather)
-    
+
     return str(response)
+
 
 # =============================
 # MAIN PROCESSING ENDPOINT
@@ -237,11 +367,12 @@ def voice():
 @app.route("/process", methods=["POST"])
 def process():
     """
-    MAIN ENGINE: Listens to student, detects question, gives REAL answer
+    MAIN ENGINE: Listens to student speech, detects questions, applies Gemini AI
+    and sales intelligence, and executes course booking stages.
     """
     user_input = request.form.get("SpeechResult", "").strip()
     call_id = request.form.get("CallSid", "default")
-    
+
     response = VoiceResponse()
     state = get_state(call_id)
     current_turn = get_turn(call_id)
@@ -254,7 +385,7 @@ def process():
         speechTimeout="auto",
         language="en-IN"
     )
-    
+
     # =============================
     # HANDLE NO SPEECH
     # =============================
@@ -266,7 +397,7 @@ def process():
         )
         response.append(gather)
         return str(response)
-    
+
     # =============================
     # HANDLE HARD EXIT
     # =============================
@@ -274,16 +405,16 @@ def process():
         response.say("Okay, no problem! All the best!", voice="Polly.Aditi", language="en-IN")
         response.hangup()
         return str(response)
-    
+
     # =============================
     # TRACK THE CONVERSATION
     # =============================
     add_to_history(call_id, "Student", user_input)
     increment_turn(call_id)
     current_turn = get_turn(call_id)
-    
+
     print(f"\n[Turn {current_turn}] Student: {user_input}")
-    
+
     # =============================
     # INITIAL STAGE: YES/NO TO BECOME SOFTWARE ENGINEER
     # =============================
@@ -304,7 +435,7 @@ def process():
             response.say(ai_response, voice="Polly.Aditi", language="en-IN")
             response.append(gather)
             return str(response)
-    
+
     # =============================
     # STAGE: COURSE SELECTION
     # =============================
@@ -322,7 +453,7 @@ def process():
             response.say(ai_response, voice="Polly.Aditi", language="en-IN")
             response.append(gather)
             return str(response)
-    
+
     # =============================
     # STAGE: DEMO INTEREST
     # =============================
@@ -344,7 +475,7 @@ def process():
             response.say(ai_response, voice="Polly.Aditi", language="en-IN")
             response.append(gather)
             return str(response)
-    
+
     # =============================
     # STAGE: DEMO DATE SELECTION
     # =============================
@@ -363,14 +494,14 @@ def process():
             response.say(ai_response, voice="Polly.Aditi", language="en-IN")
             response.append(gather)
             return str(response)
-    
+
     # =============================
     # STAGE: DEMO TIME SELECTION
     # =============================
     elif state["stage"] == "demo_time_selection":
         demo_time = extract_time(user_input)
         if demo_time:
-            ai_response = "బాగుంది బ్రో! నీకు {demo_time} time convenient బ్రో. ఇప్పుడు నీ details collect చేస్తాను బ్రో. మొదట నీ పేరు చెప్పు బ్రో?".format(demo_time=demo_time)
+            ai_response = f"బాగుంది బ్రో! నీకు {demo_time} time convenient బ్రో. ఇప్పుడు నీ details collect చేస్తాను బ్రో. మొదట నీ పేరు చెప్పు బ్రో?"
             state["demo_time"] = demo_time
             state["stage"] = "collect_student_details"
             update_state(call_id, state)
@@ -381,7 +512,7 @@ def process():
             response.say(ai_response, voice="Polly.Aditi", language="en-IN")
             response.append(gather)
             return str(response)
-    
+
     # =============================
     # STAGE: COLLECT STUDENT DETAILS
     # =============================
@@ -389,33 +520,26 @@ def process():
         if state["student_name"] is None:
             if try_general_question_response(response, call_id, user_input, state):
                 return str(response)
-            # First time - asking for name
             state["student_name"] = user_input.strip()
-            ai_response = "ధన్యవాదాలు {name} బ్రో! ఇప్పుడు నీ mobile number చెప్పు బ్రో?".format(name=state["student_name"])
+            ai_response = f"ధన్యవాదాలు {state['student_name']} బ్రో! ఇప్పుడు నీ mobile number చెప్పు బ్రో?"
             update_state(call_id, state)
         elif state["student_mobile"] is None:
             if try_general_question_response(response, call_id, user_input, state):
                 return str(response)
-            # Got name, now asking for mobile
             state["student_mobile"] = user_input.strip()
             course_name = state["course_selected"]
             from booking_system import get_course_info
             course_info = get_course_info(course_name)
             course_display = course_info["name"] if course_info else course_name
-            ai_response = "సరే {name} బ్రో! నీ mobile number {mobile} ని confirm చేస్తున్నాను 브ோ. నీ course: {course} బ్రో. ఇది correct ఆ బ్రో? Yes or No బ్రో?".format(
-                name=state["student_name"], 
-                mobile=state["student_mobile"],
-                course=course_display
-            )
+            ai_response = f"సరే {state['student_name']} బ్రో! నీ mobile number {state['student_mobile']} ని confirm చేస్తున్నాను బ్రో. నీ course: {course_display} బ్రో. ఇది correct ఆ బ్రో? Yes or No బ్రో?"
             update_state(call_id, state)
         else:
             # Confirming course selection
             if is_affirmative(user_input):
-                # Create booking with all details
                 course_name = state["course_selected"]
                 from booking_system import get_course_info
                 course_info = get_course_info(course_name)
-                
+
                 booking = create_booking(
                     phone_number=state["student_mobile"],
                     course_name=course_info["name"] if course_info else "Unknown",
@@ -423,13 +547,8 @@ def process():
                     demo_time=state["demo_time"],
                     student_name=state["student_name"]
                 )
-                
-                ai_response = "పర్ఫెక్ట్ బ్రో! {name}, నీ booking confirmed బ్రో! Course: {course} బ్రో, Date: {date} బ్రో, Time: {time} బ్రో. ఈ details నీ mobile కి message లో కూడా పంపిస్తాం బ్రో.".format(
-                    name=state["student_name"],
-                    course=course_info["name"] if course_info else course_name,
-                    date=state["demo_date"],
-                    time=state["demo_time"]
-                )
+
+                ai_response = f"పర్ఫెక్ట్ బ్రో! {state['student_name']}, నీ booking confirmed బ్రో! Course: {course_info['name'] if course_info else course_name} బ్రో, Date: {state['demo_date']} బ్రో, Time: {state['demo_time']} బ్రో. ఈ details నీ mobile కి message లో కూడా పంపిస్తాం బ్రో."
                 state["stage"] = "booking_complete"
                 update_state(call_id, state)
             elif is_negative(user_input):
@@ -440,96 +559,90 @@ def process():
                 if try_general_question_response(response, call_id, user_input, state):
                     return str(response)
                 ai_response = "సరే బ్రో, ఈ డీటెయిల్స్ confirm కావాలా? Yes లేదా No చెప్పు బ్రో."
-        
+
         response.say(ai_response, voice="Polly.Aditi", language="en-IN")
         response.append(gather)
         return str(response)
-    
+
     # =============================
     # STAGE: BOOKING COMPLETE
     # =============================
     elif state["stage"] == "booking_complete":
         course_name = state["course_selected"]
         from booking_system import get_course_info, get_student_booking
-        course_info = get_course_info(course_name)
         booking = get_student_booking(student_phone.get(call_id, "unknown"))
-        
+
         closing_msg = get_closing(booking) if booking else "Thank you!"
         response.say(closing_msg, voice="Polly.Aditi", language="en-IN")
         response.hangup()
         return str(response)
-    
+
     # =============================
-    # STAGE: ACTIVE (QUESTIONS)
+    # STAGE: ACTIVE (QUESTIONS & INTELLIGENCE)
     # =============================
     else:
-        # DETECT QUESTION TYPE & GET ANSWER - MID FLOW
         question_type, direct_answer = detect_question_type(user_input)
-        
+
         if direct_answer:
-            # Add introduction to answer like experienced sales person
             intro = get_answer_intro(question_type)
             actual_answer = generate_answer(question_type, user_input)
             ai_response = intro + " " + actual_answer
             print(f"[Answer Type] {question_type}")
-        elif question_type == "general_doubt":
-            # Handle general doubts
+        elif question_type != "unclear":
             ai_response = generate_answer(question_type, user_input)
-            print(f"[Doubt Detected] General doubt clarification")
+            print(f"[Question Detected] {question_type}")
         else:
-            ai_response = (
-                "నీ question నాకు clear కాలేదు బ్రో. "
-                "దయచేసి course content, fees, placement, projects, internship, లేదా schedule గురించి అడగండి బ్రో. "
-                "నేను honest answer ఇస్తాను బ్రో."
-            )
+            # Leverage Gemini AI for complex/unclear queries with knowledge base fallback
+            ai_response = generate_answer("unclear", user_input)
+            print("[Gemini/Knowledge Base Fallback Invoked]")
 
     # =============================
     # SPEAK THE RESPONSE
     # =============================
     response.say(ai_response, voice="Polly.Aditi", language="en-IN")
     add_to_history(call_id, "Agent", ai_response)
-    
+
     # =============================
-    # DECIDE NEXT STEP - INTELLIGENT FOLLOW UP
+    # SMART FOLLOW UP & DEMO PUSH
     # =============================
-    gather = Gather(
-        input="speech",
-        action="/process",
-        method="POST",
-        timeout=10,
-        speechTimeout="auto",
-        language="en-IN"
-    )
-    
-    # Use smart continuation from sales intelligence
     demo_msg = get_demo_message(current_turn)
-    
+
     if demo_msg and not state["demo_offered"]:
-        # Time to push demo
         follow_up = demo_msg
         state["demo_offered"] = True
         update_state(call_id, state)
     elif current_turn >= 8:
-        # If too many turns, prepare to close call
         follow_up = get_after_answer()
     else:
-        # Normal continuation - ask for more questions
         follow_up = get_after_answer()
-    
+
     gather.say(follow_up, voice="Polly.Aditi", language="en-IN")
     response.append(gather)
-    
+
     print(f"[Follow-up] {follow_up}\n")
-    
     return str(response)
 
+
 # =============================
-# RUN THE APP
+# APPLICATION ENTRYPOINT
 # =============================
 if __name__ == "__main__":
-    print("\n🚀 Starting ADVANCED AI Sales Agent (10+ Years Experience)...")
-    print("📱 Webhook endpoint: POST /voice")
-    print("✅ Talks like experienced institute sales counselor")
-    print("✅ Human-like responses with intelligence")
-    print("✅ Uses real knowledge base for answers\n")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    debug_mode = os.environ.get("FLASK_DEBUG", "0").lower() in ("1", "true")
+
+    # Automatically initialize ngrok tunnel and sync Twilio webhook if running locally
+    public_url = None
+    try:
+        from tunnel import start_auto_tunnel
+        public_url = start_auto_tunnel(port=port)
+    except Exception as exc:
+        public_url = None
+
+    print(f"\n🚀 ADVANCED AI Sales Calling Agent is ready!")
+    print(f"💻 Local Computer:        http://localhost:{port}/")
+    if public_url:
+        print(f"📱 Open on Any Mobile:    {public_url}/")
+        print(f"🌐 Twilio Voice Webhook:  {public_url}/voice")
+    print(f"✅ One single terminal is all you need!\n")
+
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)
